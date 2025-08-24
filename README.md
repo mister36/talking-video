@@ -22,7 +22,7 @@ A FastAPI server for generating lip-sync videos using the InfiniteTalk model. Th
 ### 1. Clone and Setup
 
 ```bash
-git clone <https://github.com/mister36/talking-video.git>
+git clone https://github.com/mister36/talking-video.git
 cd talking-video
 ```
 
@@ -172,7 +172,7 @@ Use these settings:
 ```bash
 #!/bin/bash
 cd /workspace
-git clone <https://github.com/mister36/talking-video.git> talking-video
+git clone https://github.com/mister36/talking-video.git talking-video
 cd talking-video
 
 # Install dependencies
