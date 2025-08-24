@@ -1,0 +1,92 @@
+# FastAPI and server dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# PyTorch and related packages (CUDA 12.1 compatible)
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+xformers==0.0.28
+
+# Audio processing
+librosa==0.10.1
+soundfile==0.12.1
+scipy==1.11.4
+
+# Image processing
+Pillow==10.1.0
+opencv-python==4.8.1.78
+imageio==2.33.1
+imageio-ffmpeg==0.4.9
+
+# Video processing
+moviepy==1.0.3
+
+# Deep learning and AI
+transformers==4.36.2
+diffusers==0.24.0
+accelerate==0.25.0
+safetensors==0.4.1
+
+# Numerical computing
+numpy==1.24.4
+pandas==2.1.4
+
+# Utilities
+tqdm==4.66.1
+omegaconf==2.3.0
+einops==0.7.0
+timm==0.9.12
+
+# Flash attention (required for InfiniteTalk)
+flash-attn==2.7.4.post1
+
+# Additional InfiniteTalk dependencies
+misaki[en]
+ninja
+packaging
+
+# Model and tokenizer utilities
+tokenizers==0.15.0
+huggingface-hub==0.19.4
+
+# File handling
+aiofiles==23.2.0
+
+# Logging and monitoring
+loguru==0.7.2
+
+# Configuration
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Development and debugging
+rich==13.7.0
+
+# HTTP client for model downloads
+httpx==0.25.2
+requests==2.31.0
+
+# Audio codecs and processing
+resampy==0.4.2
+audioread==3.0.1
+
+# Memory optimization
+psutil==5.9.6
+
+# Additional utilities for video generation
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# ONNX runtime (optional, for optimized inference)
+# onnxruntime-gpu==1.16.3
+
+# TensorBoard for monitoring (optional)
+tensorboard==2.15.1
+
+# Memory efficient attention
+# xformers==0.0.23.post1
+
+# Additional image utilities
+scikit-image==0.22.0
