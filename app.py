@@ -88,9 +88,9 @@ class JobInfo(BaseModel):
 
 # Global variables for model paths and configurations
 MODEL_CONFIG = {
-    "ckpt_dir": "/workspace/.cache/huggingface/hub/models--Wan-AI--Wan2.1-I2V-14B-480P",
-    "wav2vec_dir": "weights/chinese-wav2vec2-base", 
-    "infinitetalk_dir": "weights/InfiniteTalk/single/infinitetalk.safetensors",
+    "ckpt_dir": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
+    "wav2vec_dir": "InfiniteTalk/weights/chinese-wav2vec2-base", 
+    "infinitetalk_dir": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
     "size": "infinitetalk-480",  # or infinitetalk-720
     "sample_steps": 40,
     "mode": "streaming",
@@ -395,9 +395,9 @@ class InfiniteTalkGenerator:
             json.dump(input_data, f)
         
         try:
-            # Build command for InfiniteTalk generation
+            # Build command for InfiniteTalk generation using the cloned repository
             cmd = [
-                "python", "generate_infinitetalk.py",
+                "python", "InfiniteTalk/generate_infinitetalk.py",
                 "--ckpt_dir", MODEL_CONFIG["ckpt_dir"],
                 "--wav2vec_dir", MODEL_CONFIG["wav2vec_dir"],
                 "--infinitetalk_dir", MODEL_CONFIG["infinitetalk_dir"],
@@ -441,11 +441,45 @@ def check_models_exist():
     return True
 
 
+def clone_infinitetalk_repo():
+    """Clone the InfiniteTalk repository if it doesn't exist"""
+    repo_dir = Path("InfiniteTalk")
+    
+    if repo_dir.exists():
+        logger.info("InfiniteTalk repository already exists")
+        return True
+    
+    logger.info("Cloning InfiniteTalk repository...")
+    try:
+        cmd = [
+            "git", "clone", 
+            "https://github.com/MeiGen-AI/InfiniteTalk.git",
+            "InfiniteTalk"
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        logger.info("InfiniteTalk repository cloned successfully")
+        logger.info(f"Git output: {result.stdout}")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to clone InfiniteTalk repository: {e}")
+        logger.error(f"Git stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error cloning repository: {e}")
+        return False
+
 def download_models_automatically():
     """Automatically download models using setup.py"""
     logger.info("Models not found. Starting automatic download...")
     
     try:
+        # First ensure InfiniteTalk repo is cloned
+        if not clone_infinitetalk_repo():
+            logger.error("Failed to clone InfiniteTalk repository")
+            return False
+        
         # Run setup.py to download models
         setup_script = Path(__file__).parent / "setup.py"
         if not setup_script.exists():
@@ -493,6 +527,18 @@ def download_models_background():
     logger.info("Background model download started")
     
     try:
+        # First ensure InfiniteTalk repo is cloned
+        with download_lock:
+            download_status["progress"] = 5.0
+            download_status["message"] = "Cloning InfiniteTalk repository..."
+        
+        if not clone_infinitetalk_repo():
+            with download_lock:
+                download_status["status"] = "failed"
+                download_status["error"] = "Failed to clone InfiniteTalk repository"
+            logger.error("Failed to clone InfiniteTalk repository")
+            return
+        
         # Run setup.py to download models
         setup_script = Path(__file__).parent / "setup.py"
         if not setup_script.exists():
@@ -575,6 +621,10 @@ async def startup_event():
     # Load existing jobs from disk
     JobManager.load_jobs_from_disk()
     logger.info(f"Loaded {len(jobs)} existing jobs")
+    
+    # First ensure InfiniteTalk repository is cloned
+    if not clone_infinitetalk_repo():
+        logger.warning("Failed to clone InfiniteTalk repository on startup")
     
     # Check if models exist, start background download if not
     if not check_models_exist():

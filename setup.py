@@ -1,5 +1,5 @@
 """
-Setup script for downloading InfiniteTalk models
+Setup script for downloading InfiniteTalk models and cloning the repository
 Run this script to download all required model weights
 """
 
@@ -36,12 +36,29 @@ def install_huggingface_hub():
     print("📦 Installing huggingface_hub...")
     return run_command([sys.executable, "-m", "pip", "install", "huggingface_hub"], "Installing huggingface_hub")
 
+def clone_infinitetalk_repo():
+    """Clone the InfiniteTalk repository if it doesn't exist"""
+    repo_dir = Path("InfiniteTalk")
+    
+    if repo_dir.exists():
+        print("⏭️  InfiniteTalk repository already exists")
+        return True
+    
+    print("📦 Cloning InfiniteTalk repository...")
+    cmd = [
+        "git", "clone", 
+        "https://github.com/MeiGen-AI/InfiniteTalk.git",
+        "InfiniteTalk"
+    ]
+    
+    return run_command(cmd, "Cloning InfiniteTalk repository")
+
 def download_models():
     """Download all required models"""
     
-    # Create weights directory
-    weights_dir = Path("weights")
-    weights_dir.mkdir(exist_ok=True)
+    # Create InfiniteTalk/weights directory
+    weights_dir = Path("InfiniteTalk/weights")
+    weights_dir.mkdir(parents=True, exist_ok=True)
     
     print("🚀 Starting model download process...")
     print("This may take a while depending on your internet connection.")
@@ -56,17 +73,17 @@ def download_models():
     models_to_download = [
         {
             "repo": "Wan-AI/Wan2.1-I2V-14B-480P",
-            "local_dir": "weights/Wan2.1-I2V-14B-480P",
+            "local_dir": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
             "description": "Downloading Wan2.1-I2V-14B-480P base model"
         },
         {
             "repo": "TencentGameMate/chinese-wav2vec2-base",
-            "local_dir": "weights/chinese-wav2vec2-base",
+            "local_dir": "InfiniteTalk/weights/chinese-wav2vec2-base",
             "description": "Downloading Chinese Wav2Vec2 audio encoder"
         },
         {
             "repo": "MeiGen-AI/InfiniteTalk",
-            "local_dir": "weights/InfiniteTalk",
+            "local_dir": "InfiniteTalk/weights/InfiniteTalk",
             "description": "Downloading InfiniteTalk weights"
         }
     ]
@@ -91,14 +108,14 @@ def download_models():
             print(f"❌ Failed to download {model['repo']}")
     
     # Download specific model.safetensors for wav2vec2
-    wav2vec_file = "weights/chinese-wav2vec2-base/model.safetensors"
+    wav2vec_file = "InfiniteTalk/weights/chinese-wav2vec2-base/model.safetensors"
     if not Path(wav2vec_file).exists():
         cmd = [
             "huggingface-cli", "download",
             "TencentGameMate/chinese-wav2vec2-base",
             "model.safetensors",
             "--revision", "refs/pr/1",
-            "--local-dir", "weights/chinese-wav2vec2-base"
+            "--local-dir", "InfiniteTalk/weights/chinese-wav2vec2-base"
         ]
         run_command(cmd, "Downloading Wav2Vec2 safetensors file")
     
@@ -116,9 +133,9 @@ def verify_installation():
     print("\n🔍 Verifying installation...")
     
     required_paths = [
-        "weights/Wan2.1-I2V-14B-480P",
-        "weights/chinese-wav2vec2-base",
-        "weights/InfiniteTalk"
+        "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
+        "InfiniteTalk/weights/chinese-wav2vec2-base",
+        "InfiniteTalk/weights/InfiniteTalk"
     ]
     
     all_present = True
@@ -136,13 +153,18 @@ def main():
     print("🚀 InfiniteTalk Model Setup")
     print("=" * 40)
     
+    # Clone InfiniteTalk repository first
+    if not clone_infinitetalk_repo():
+        print("\n❌ Failed to clone InfiniteTalk repository.")
+        sys.exit(1)
+    
     # Download models
     if download_models():
         # Verify installation
         if verify_installation():
             print("\n🎉 Setup completed successfully!")
             print("\nYou can now run the FastAPI server with:")
-            print("python main.py")
+            print("python app.py")
         else:
             print("\n❌ Setup incomplete. Some models are missing.")
             sys.exit(1)

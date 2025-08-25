@@ -50,6 +50,8 @@ timm==0.9.12
 misaki[en]
 ninja
 packaging
+wheel
+flash_attn==2.7.4.post1
 
 # Model and tokenizer utilities
 tokenizers==0.15.0
