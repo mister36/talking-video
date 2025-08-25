@@ -16,7 +16,7 @@ scipy==1.11.4
 
 # Image processing
 Pillow==10.1.0
-opencv-python==4.8.1.78
+opencv-python>=4.9.0.80
 imageio==2.33.1
 imageio-ffmpeg==0.4.9
 
@@ -24,13 +24,13 @@ imageio-ffmpeg==0.4.9
 moviepy==1.0.3
 
 # Deep learning and AI
-transformers==4.36.2
-diffusers==0.24.0
-accelerate==0.25.0
+transformers>=4.49.0
+diffusers>=0.31.0
+accelerate>=1.1.1
 safetensors==0.4.1
 
 # Numerical computing
-numpy==1.24.4
+numpy>=1.23.5,<2
 pandas==2.1.4
 
 # Utilities
@@ -54,7 +54,7 @@ wheel
 flash_attn==2.7.4.post1
 
 # Model and tokenizer utilities
-tokenizers==0.15.0
+tokenizers>=0.20.3
 huggingface-hub==0.19.4
 
 # File handling
@@ -96,3 +96,12 @@ tensorboard==2.15.1
 
 # Additional image utilities
 scikit-image==0.22.0
+easydict
+ftfy
+dashscope
+gradio>=5.0.0
+xfuser>=0.4.1
+pyloudnorm
+optimum-quanto==0.2.6
+scenedetect
+decord
