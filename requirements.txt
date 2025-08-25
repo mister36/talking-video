@@ -24,7 +24,7 @@ imageio-ffmpeg==0.4.9
 moviepy==1.0.3
 
 # Deep learning and AI
-transformers>=4.49.0
+transformers==4.52
 diffusers>=0.31.0
 accelerate>=1.1.1
 safetensors>=0.4.3
