@@ -1,7 +1,7 @@
 # FastAPI and server dependencies
-fastapi==0.104.1
+fastapi>=0.115.2
 uvicorn[standard]==0.24.0
-python-multipart==0.0.6
+python-multipart>=0.0.9
 
 # PyTorch and related packages (CUDA 12.1 compatible)
 torch==2.4.1
