@@ -39,8 +39,12 @@ omegaconf==2.3.0
 einops==0.7.0
 timm==0.9.12
 
-# Flash attention (required for InfiniteTalk)
-flash-attn==2.7.4.post1
+# Flash attention alternatives (uncomment if needed):
+# Option 1: Use xformers (already included) - preferred
+# Option 2: Fast flash-attn install (requires ninja):
+#   MAX_JOBS=4 pip install flash-attn==2.7.4.post1 --no-build-isolation
+# Option 3: Pre-compiled wheel (check https://github.com/PLISGOOD/flash-attention-windows-wheels)
+# flash-attn==2.7.4.post1
 
 # Additional InfiniteTalk dependencies
 misaki[en]
