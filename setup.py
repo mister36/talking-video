@@ -14,18 +14,19 @@ def run_command(cmd, description):
     print(f"Running: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        # Stream output to console in real-time instead of capturing it
+        result = subprocess.run(cmd, check=True, capture_output=False, text=True)
         print("✅ Success")
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Error: {e}")
-        print(f"Stdout: {e.stdout}")
-        print(f"Stderr: {e.stderr}")
+        print("Check the output above for detailed error information")
         return False
 
 def check_huggingface_cli():
     """Check if huggingface-cli is available"""
     try:
+        # Keep this one quiet since it's just a version check
         subprocess.run(["huggingface-cli", "--version"], check=True, capture_output=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):

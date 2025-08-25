@@ -553,9 +553,10 @@ def download_models_background():
             download_status["message"] = "Running setup.py to download models..."
         
         logger.info("Running setup.py to download models...")
+        # Stream output to console instead of capturing it
         result = subprocess.run(
             [sys.executable, str(setup_script)],
-            capture_output=True,
+            capture_output=False,  # Allow output to stream to console
             text=True,
             check=True
         )
@@ -565,7 +566,6 @@ def download_models_background():
             download_status["message"] = "Verifying downloaded models..."
         
         logger.info("Model download completed successfully")
-        logger.info(f"Setup output: {result.stdout}")
         
         # Verify models are now present
         if check_models_exist():
@@ -583,9 +583,9 @@ def download_models_background():
     except subprocess.CalledProcessError as e:
         with download_lock:
             download_status["status"] = "failed"
-            download_status["error"] = f"Model download failed: {e.stderr}"
+            download_status["error"] = f"Model download failed: {e}"
         logger.error(f"Model download failed: {e}")
-        logger.error(f"Setup stderr: {e.stderr}")
+        logger.error("Check the console output above for detailed error information")
     except Exception as e:
         with download_lock:
             download_status["status"] = "failed"
