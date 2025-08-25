@@ -92,13 +92,13 @@ MODEL_CONFIG = {
     "wav2vec_dir": "InfiniteTalk/weights/chinese-wav2vec2-base", 
     "infinitetalk_dir": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
     "size": "infinitetalk-480",  # or infinitetalk-720
-    "sample_steps": 40,
+    "sample_steps": 20,  # Reduced from 40 for faster inference on A100
     "mode": "streaming",
     "motion_frame": 9,
     "sample_text_guide_scale": 5.0,
     "sample_audio_guide_scale": 4.0,
     "max_frame_num": 1000,  # 40 seconds at 25fps
-    "num_persistent_param_in_dit": 0,  # For low VRAM usage
+    # Removed num_persistent_param_in_dit - A100 has enough VRAM to keep everything on GPU
 }
 
 # Directory setup
@@ -408,7 +408,6 @@ class InfiniteTalkGenerator:
                 "--sample_steps", str(MODEL_CONFIG["sample_steps"]),
                 "--mode", MODEL_CONFIG["mode"],
                 "--motion_frame", str(MODEL_CONFIG["motion_frame"]),
-                "--num_persistent_param_in_dit", str(MODEL_CONFIG["num_persistent_param_in_dit"]),
                 "--save_file", output_path.replace('.mp4', '')
             ]
             
