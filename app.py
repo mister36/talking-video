@@ -382,11 +382,13 @@ class InfiniteTalkGenerator:
         if not self.model_loaded:
             self.load_model()
             
-        # Create input JSON for InfiniteTalk
+        # Create input JSON for InfiniteTalk with the correct format
         input_data = {
-            "image_path": image_path,
-            "audio_path": audio_path,
-            "output_path": output_path
+            "prompt": "A person is speaking with natural facial expressions and lip movements, captured in high quality with good lighting and clear details.",
+            "cond_video": image_path,
+            "cond_audio": {
+                "person1": audio_path
+            }
         }
         
         # Create temporary JSON file
