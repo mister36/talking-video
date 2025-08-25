@@ -412,15 +412,15 @@ class InfiniteTalkGenerator:
             
             # Run the generation process
             print(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=False, text=True, check=True)
             
             if result.returncode != 0:
-                raise RuntimeError(f"Generation failed: {result.stderr}")
+                raise RuntimeError("Generation failed - check console output for details")
                 
             return output_path
             
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Video generation failed: {e.stderr}")
+            raise RuntimeError(f"Video generation failed - check console output for details: {e}")
         finally:
             # Clean up temporary files
             if temp_json.exists():
