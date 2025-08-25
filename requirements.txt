@@ -27,7 +27,7 @@ moviepy==1.0.3
 transformers>=4.49.0
 diffusers>=0.31.0
 accelerate>=1.1.1
-safetensors==0.4.1
+safetensors>=0.4.3
 
 # Numerical computing
 numpy>=1.23.5,<2
