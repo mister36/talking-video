@@ -55,7 +55,7 @@ flash_attn==2.7.4.post1
 
 # Model and tokenizer utilities
 tokenizers>=0.20.3
-huggingface-hub==0.19.4
+huggingface-hub>=0.34.0
 
 # File handling
 aiofiles==23.2.0
