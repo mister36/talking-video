@@ -88,7 +88,7 @@ class JobInfo(BaseModel):
 
 # Global variables for model paths and configurations
 MODEL_CONFIG = {
-    "ckpt_dir": "weights/Wan2.1-I2V-14B-480P",
+    "ckpt_dir": "/workspace/.cache/huggingface/hub/models--Wan-AI--Wan2.1-I2V-14B-480P",
     "wav2vec_dir": "weights/chinese-wav2vec2-base", 
     "infinitetalk_dir": "weights/InfiniteTalk/single/infinitetalk.safetensors",
     "size": "infinitetalk-480",  # or infinitetalk-720
