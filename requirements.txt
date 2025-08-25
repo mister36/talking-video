@@ -70,6 +70,9 @@ pydantic-settings==2.1.0
 # Development and debugging
 rich==13.7.0
 
+# Code generation
+sqlacodegen --pre
+
 # HTTP client for model downloads
 httpx==0.25.2
 requests==2.31.0
