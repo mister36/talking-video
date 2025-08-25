@@ -620,6 +620,24 @@ async def startup_event():
     """Initialize the model and load jobs on startup"""
     global download_status
     
+    # Install flash-attn with --no-build-isolation
+    try:
+        logger.info("Installing flash-attn with --no-build-isolation...")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "flash-attn", "--no-build-isolation"],
+            capture_output=True,
+            text=True,
+            timeout=600  # 10 minute timeout
+        )
+        if result.returncode == 0:
+            logger.info("flash-attn installed successfully")
+        else:
+            logger.warning(f"flash-attn installation failed: {result.stderr}")
+    except subprocess.TimeoutExpired:
+        logger.warning("flash-attn installation timed out")
+    except Exception as e:
+        logger.warning(f"Error installing flash-attn: {e}")
+    
     # Load existing jobs from disk
     JobManager.load_jobs_from_disk()
     logger.info(f"Loaded {len(jobs)} existing jobs")

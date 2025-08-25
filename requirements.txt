@@ -51,7 +51,7 @@ packaging
 wheel
 
 # Try compatible flash-attn version first
-flash-attn --no-build-isolation
+# flash-attn (installed via startup script with --no-build-isolation)
 
 # Fallback option - remove flash_attn and rely on xformers
 # Comment out flash_attn line above if using this approach
