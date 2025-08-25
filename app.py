@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 from enum import Enum
 import sys
+import threading
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
@@ -342,11 +343,23 @@ class InfiniteTalkGenerator:
         if self.model_loaded:
             return
             
-        # Check if model weights exist, download if not
+        # Check if model weights exist
         if not check_models_exist():
-            logger.info("Models not found during load_model, attempting download...")
-            if not download_models_automatically():
-                raise FileNotFoundError("Failed to download required models. Please run 'python setup.py' manually.")
+            # Check if models are currently downloading
+            with download_lock:
+                status = download_status["status"]
+            
+            if status == "downloading":
+                raise FileNotFoundError("Models are currently downloading. Please wait for download to complete. Check /model-status for progress.")
+            elif status == "failed":
+                with download_lock:
+                    error = download_status["error"]
+                raise FileNotFoundError(f"Model download failed: {error}. Please run 'python setup.py' manually.")
+            else:
+                # Start download if not already started
+                logger.info("Models not found during load_model, starting background download...")
+                start_background_download()
+                raise FileNotFoundError("Model download started in background. Please wait for download to complete. Check /model-status for progress.")
         
         # Double-check that models now exist
         required_paths = [
@@ -467,6 +480,89 @@ def download_models_automatically():
         return False
 
 
+def download_models_background():
+    """Background thread function to download models"""
+    global download_status
+    
+    with download_lock:
+        download_status["status"] = "downloading"
+        download_status["progress"] = 0.0
+        download_status["message"] = "Starting model download..."
+        download_status["error"] = None
+    
+    logger.info("Background model download started")
+    
+    try:
+        # Run setup.py to download models
+        setup_script = Path(__file__).parent / "setup.py"
+        if not setup_script.exists():
+            with download_lock:
+                download_status["status"] = "failed"
+                download_status["error"] = "setup.py not found!"
+            logger.error("setup.py not found!")
+            return
+        
+        with download_lock:
+            download_status["progress"] = 10.0
+            download_status["message"] = "Running setup.py to download models..."
+        
+        logger.info("Running setup.py to download models...")
+        result = subprocess.run(
+            [sys.executable, str(setup_script)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        with download_lock:
+            download_status["progress"] = 90.0
+            download_status["message"] = "Verifying downloaded models..."
+        
+        logger.info("Model download completed successfully")
+        logger.info(f"Setup output: {result.stdout}")
+        
+        # Verify models are now present
+        if check_models_exist():
+            with download_lock:
+                download_status["status"] = "completed"
+                download_status["progress"] = 100.0
+                download_status["message"] = "All models downloaded and verified successfully"
+            logger.info("All models verified successfully")
+        else:
+            with download_lock:
+                download_status["status"] = "failed"
+                download_status["error"] = "Models still missing after download"
+            logger.error("Models still missing after download")
+            
+    except subprocess.CalledProcessError as e:
+        with download_lock:
+            download_status["status"] = "failed"
+            download_status["error"] = f"Model download failed: {e.stderr}"
+        logger.error(f"Model download failed: {e}")
+        logger.error(f"Setup stderr: {e.stderr}")
+    except Exception as e:
+        with download_lock:
+            download_status["status"] = "failed"
+            download_status["error"] = f"Unexpected error during model download: {e}"
+        logger.error(f"Unexpected error during model download: {e}")
+
+
+def start_background_download():
+    """Start background model download in a separate thread"""
+    download_thread = threading.Thread(target=download_models_background, daemon=True)
+    download_thread.start()
+    logger.info("Background model download thread started")
+
+
+# Global download status tracking
+download_status = {
+    "status": "not_started",  # not_started, downloading, completed, failed
+    "progress": 0.0,
+    "message": "",
+    "error": None
+}
+download_lock = threading.Lock()
+
 # Global model instance
 generator = InfiniteTalkGenerator()
 
@@ -474,39 +570,65 @@ generator = InfiniteTalkGenerator()
 @app.on_event("startup")
 async def startup_event():
     """Initialize the model and load jobs on startup"""
+    global download_status
     
     # Load existing jobs from disk
     JobManager.load_jobs_from_disk()
     logger.info(f"Loaded {len(jobs)} existing jobs")
     
-    # Check if models exist, download if not
+    # Check if models exist, start background download if not
     if not check_models_exist():
-        logger.info("Models not found, starting automatic download...")
-        if download_models_automatically():
-            logger.info("Models downloaded successfully")
-        else:
-            logger.error("Failed to download models automatically")
-            logger.error("Please run 'python setup.py' manually to download models")
-            return
+        logger.info("Models not found, starting background download...")
+        with download_lock:
+            download_status["status"] = "not_started"
+        start_background_download()
+        logger.info("Server will be available immediately. Models are downloading in background.")
+        logger.info("Check /model-status for download progress.")
     else:
         logger.info("All required models found")
-    
-    try:
-        generator.load_model()
-        logger.info("InfiniteTalk model loaded successfully")
-    except Exception as e:
-        logger.warning(f"Model loading failed: {e}")
-        logger.warning("Model will be loaded on first request")
+        with download_lock:
+            download_status["status"] = "completed"
+            download_status["progress"] = 100.0
+            download_status["message"] = "All models already present"
+        
+        # Try to load models immediately if they exist
+        try:
+            generator.load_model()
+            logger.info("InfiniteTalk model loaded successfully")
+        except Exception as e:
+            logger.warning(f"Model loading failed: {e}")
+            logger.warning("Model will be loaded on first request")
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    with download_lock:
+        download_info = download_status.copy()
+    
     return {
         "status": "healthy",
         "model_loaded": generator.model_loaded,
-        "device": generator.device if hasattr(generator, 'device') else "unknown"
+        "device": generator.device if hasattr(generator, 'device') else "unknown",
+        "models_available": check_models_exist(),
+        "download_status": download_info
     }
+
+
+@app.get("/model-status")
+async def model_download_status():
+    """
+    Get the current status of model download
+    
+    Returns information about whether models are available and download progress
+    """
+    with download_lock:
+        status_info = download_status.copy()
+    
+    status_info["models_available"] = check_models_exist()
+    status_info["model_loaded"] = generator.model_loaded
+    
+    return JSONResponse(content=status_info)
 
 
 def validate_image(file: UploadFile) -> bool:
@@ -917,15 +1039,21 @@ async def delete_job(job_id: str):
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
+    with download_lock:
+        download_info = download_status.copy()
+    
     return {
         "message": "InfiniteTalk Lip-Sync Video Generation API",
         "version": "1.0.0",
+        "models_available": check_models_exist(),
+        "download_status": download_info,
         "endpoints": {
             "generate_video": "/generate-video",
             "job_status": "/job/{job_id}",
             "download_video": "/download/{job_id}",
             "list_jobs": "/jobs",
             "delete_job": "/job/{job_id} (DELETE)",
+            "model_status": "/model-status",
             "health": "/health",
             "docs": "/docs"
         },
