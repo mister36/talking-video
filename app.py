@@ -12,6 +12,7 @@ from typing import Optional, Dict, List
 import uuid
 import subprocess
 import asyncio
+import logging
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -20,6 +21,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Import InfiniteTalk dependencies (these will be available after model setup)
 import torch
@@ -103,7 +108,78 @@ JOBS_DIR = Path("jobs")
 for dir_path in [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, JOBS_DIR]:
     dir_path.mkdir(exist_ok=True)
 
-# In-memory job storage (in production, use Redis or database)
+# Simple job storage - in a real system you'd use a database
+jobs = {}
+
+class JobManager:
+    """Simple job management system"""
+    
+    @staticmethod
+    def create_job(request_params: JobRequest, image_path: str, audio_path: str, output_path: str) -> str:
+        """Create a new job and return job ID"""
+        job_id = str(uuid.uuid4())
+        
+        job_data = {
+            "id": job_id,
+            "status": "queued",
+            "type": "video",
+            "image_path": image_path,
+            "audio_path": audio_path,
+            "output_path": output_path,
+            "request_params": request_params.model_dump(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": None,
+            "error": None,
+            "progress": 0.0
+        }
+        
+        jobs[job_id] = job_data
+        
+        # Save job to disk for persistence
+        job_file = JOBS_DIR / f"{job_id}.json"
+        with open(job_file, "w") as f:
+            json.dump(job_data, f, indent=2)
+        
+        return job_id
+    
+    @staticmethod
+    def update_job_status(job_id: str, status: str, error: str = None, progress: float = None):
+        """Update job status"""
+        if job_id not in jobs:
+            return False
+        
+        jobs[job_id]["status"] = status
+        if error:
+            jobs[job_id]["error"] = error
+        if progress is not None:
+            jobs[job_id]["progress"] = progress
+        if status == "completed":
+            jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save updated job to disk
+        job_file = JOBS_DIR / f"{job_id}.json"
+        with open(job_file, "w") as f:
+            json.dump(jobs[job_id], f, indent=2)
+        
+        return True
+    
+    @staticmethod
+    def get_job(job_id: str) -> dict:
+        """Get job details"""
+        return jobs.get(job_id)
+    
+    @staticmethod
+    def load_jobs_from_disk():
+        """Load existing jobs from disk on startup"""
+        for job_file in JOBS_DIR.glob("*.json"):
+            try:
+                with open(job_file, "r") as f:
+                    job_data = json.load(f)
+                    jobs[job_data["id"]] = job_data
+            except Exception as e:
+                logger.warning(f"Could not load job file {job_file}: {e}")
+
+# In-memory job storage (for backward compatibility)
 active_jobs: Dict[str, JobInfo] = {}
 job_storage_file = JOBS_DIR / "jobs.json"
 
@@ -139,8 +215,63 @@ def save_jobs_to_storage():
         print(f"Warning: Failed to save jobs to storage: {e}")
 
 
-async def process_video_generation(job_id: str):
-    """Background task to process video generation"""
+def process_video_generation(job_id: str):
+    """Process video generation job"""
+    try:
+        JobManager.update_job_status(job_id, "processing", progress=0.0)
+        logger.info(f"Starting video generation for job {job_id}")
+        
+        job = JobManager.get_job(job_id)
+        if not job:
+            logger.error(f"Job {job_id} not found")
+            return
+        
+        # Update progress
+        JobManager.update_job_status(job_id, "processing", progress=10.0)
+        
+        # Generate video using the existing generator
+        result_path = generator.generate_video(
+            job["image_path"],
+            job["audio_path"],
+            job["output_path"]
+        )
+        
+        JobManager.update_job_status(job_id, "processing", progress=90.0)
+        
+        # Verify output file exists
+        if not os.path.exists(result_path):
+            raise Exception("Video generation completed but output file not found")
+        
+        # Update job status to completed
+        JobManager.update_job_status(job_id, "completed", progress=100.0)
+        logger.info(f"Video generation completed for job {job_id}")
+        
+        # Clean up uploaded files
+        try:
+            if os.path.exists(job["image_path"]) and UPLOAD_DIR.name in job["image_path"]:
+                os.unlink(job["image_path"])
+            if os.path.exists(job["audio_path"]) and UPLOAD_DIR.name in job["audio_path"]:
+                os.unlink(job["audio_path"])
+        except:
+            pass  # Don't fail if cleanup fails
+            
+    except Exception as e:
+        error_msg = f"Video generation failed: {str(e)}"
+        logger.error(f"Job {job_id} failed: {error_msg}")
+        JobManager.update_job_status(job_id, "failed", error=error_msg)
+        
+        # Clean up files on error
+        job = JobManager.get_job(job_id)
+        if job:
+            try:
+                for file_path in [job["image_path"], job["audio_path"], job["output_path"]]:
+                    if os.path.exists(file_path):
+                        os.unlink(file_path)
+            except:
+                pass
+
+async def process_video_generation_legacy(job_id: str):
+    """Legacy background task to process video generation (for backward compatibility)"""
     job_info = active_jobs.get(job_id)
     if not job_info:
         return
@@ -282,7 +413,12 @@ generator = InfiniteTalkGenerator()
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the model on startup"""
+    """Initialize the model and load jobs on startup"""
+    
+    # Load existing jobs from disk
+    JobManager.load_jobs_from_disk()
+    logger.info(f"Loaded {len(jobs)} existing jobs")
+    
     try:
         generator.load_model()
         print("InfiniteTalk model loaded successfully")
@@ -409,38 +545,50 @@ async def generate_video(
         MODEL_CONFIG["sample_audio_guide_scale"] = audio_cfg_scale
         MODEL_CONFIG["max_frame_num"] = int(max_duration * 25)  # 25 fps
         
-        # Create job info
+        # Create job using JobManager
+        request_params = JobRequest(
+            resolution=resolution,
+            sample_steps=sample_steps,
+            audio_cfg_scale=audio_cfg_scale,
+            max_duration=max_duration
+        )
+        
+        job_id = JobManager.create_job(
+            request_params=request_params,
+            image_path=str(image_path),
+            audio_path=str(audio_path),
+            output_path=str(output_path)
+        )
+        
+        # Also create legacy job info for backward compatibility
         job_info = JobInfo(
-            job_id=request_id,
+            job_id=job_id,
             status=JobStatus.PENDING,
             image_path=str(image_path),
             audio_path=str(audio_path),
             output_path=str(output_path),
-            request_params=JobRequest(
-                resolution=resolution,
-                sample_steps=sample_steps,
-                audio_cfg_scale=audio_cfg_scale,
-                max_duration=max_duration
-            ),
+            request_params=request_params,
             created_at=datetime.now(timezone.utc)
         )
         
         # Store job info
-        active_jobs[request_id] = job_info
+        active_jobs[job_id] = job_info
         save_jobs_to_storage()
         
-        # Start background processing
-        background_tasks.add_task(process_video_generation, request_id)
+        logger.info(f"Created video generation job {job_id}")
+        
+        # Start background processing immediately
+        background_tasks.add_task(process_video_generation, job_id)
         
         # Return job ID immediately
         return JSONResponse(
             content={
-                "job_id": request_id,
-                "status": JobStatus.PENDING,
-                "message": "Video generation job started",
+                "job_id": job_id,
+                "status": "queued",
+                "message": "Video generation job created and processing started. Use /job/{job_id} to check progress and /download/{job_id} to download when complete.",
                 "created_at": job_info.created_at.isoformat()
             },
-            headers={"X-Request-ID": request_id}
+            headers={"X-Request-ID": job_id}
         )
         
     except HTTPException:
@@ -460,6 +608,33 @@ async def get_job_status(job_id: str):
     
     - **job_id**: The job ID returned from /generate-video
     """
+    # Try new job manager first
+    job = JobManager.get_job(job_id)
+    if job:
+        response_data = {
+            "job_id": job["id"],
+            "status": job["status"],
+            "type": job["type"],
+            "created_at": job["created_at"],
+            "completed_at": job.get("completed_at"),
+            "error": job.get("error"),
+            "progress": job.get("progress", 0.0)
+        }
+        
+        if job["status"] == "completed":
+            response_data["message"] = "Video generation completed successfully"
+            response_data["download_url"] = f"/download/{job_id}"
+        elif job["status"] == "failed":
+            response_data["message"] = "Video generation failed"
+            response_data["error_message"] = job.get("error")
+        elif job["status"] == "processing":
+            response_data["message"] = "Video generation in progress"
+        else:
+            response_data["message"] = "Job is pending"
+        
+        return JSONResponse(content=response_data)
+    
+    # Fallback to legacy job storage
     job_info = active_jobs.get(job_id)
     if not job_info:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -494,6 +669,26 @@ async def download_video(job_id: str):
     
     - **job_id**: The job ID returned from /generate-video
     """
+    # Try new job manager first
+    job = JobManager.get_job(job_id)
+    if job:
+        if job["status"] != "completed":
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Video not ready. Current status: {job['status']}"
+            )
+        
+        if not os.path.exists(job["output_path"]):
+            raise HTTPException(status_code=404, detail="Video file not found")
+        
+        return FileResponse(
+            job["output_path"],
+            media_type="video/mp4",
+            filename=f"lipsync_video_{job_id}.mp4",
+            headers={"X-Job-ID": job_id}
+        )
+    
+    # Fallback to legacy job storage
     job_info = active_jobs.get(job_id)
     if not job_info:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -523,39 +718,60 @@ async def list_jobs(status: Optional[str] = None, limit: int = 50):
     - **status**: Filter by job status (pending, processing, completed, failed)
     - **limit**: Maximum number of jobs to return (default: 50)
     """
-    jobs = list(active_jobs.values())
+    all_jobs = []
+    
+    # Add jobs from new JobManager
+    for job_id, job_data in jobs.items():
+        all_jobs.append({
+            "job_id": job_id,
+            "type": job_data["type"],
+            "status": job_data["status"],
+            "created_at": job_data["created_at"],
+            "completed_at": job_data.get("completed_at"),
+            "progress": job_data.get("progress", 0.0),
+            "error": job_data.get("error")
+        })
+    
+    # Add legacy jobs
+    for job_info in active_jobs.values():
+        all_jobs.append({
+            "job_id": job_info.job_id,
+            "type": "video",
+            "status": job_info.status.value,
+            "created_at": job_info.created_at.isoformat(),
+            "completed_at": job_info.completed_at.isoformat() if job_info.completed_at else None,
+            "progress": job_info.progress,
+            "error": job_info.error_message
+        })
     
     # Filter by status if provided
     if status:
-        try:
-            status_enum = JobStatus(status)
-            jobs = [job for job in jobs if job.status == status_enum]
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+        all_jobs = [job for job in all_jobs if job["status"] == status]
     
     # Sort by creation time (newest first)
-    jobs.sort(key=lambda x: x.created_at, reverse=True)
+    all_jobs.sort(key=lambda x: x["created_at"], reverse=True)
     
     # Limit results
-    jobs = jobs[:limit]
+    all_jobs = all_jobs[:limit]
     
     # Convert to response format
     response_jobs = []
-    for job in jobs:
+    for job in all_jobs:
         job_data = {
-            "job_id": job.job_id,
-            "status": job.status,
-            "created_at": job.created_at.isoformat(),
-            "progress": job.progress
+            "job_id": job["job_id"],
+            "type": job["type"],
+            "status": job["status"],
+            "created_at": job["created_at"],
+            "progress": job["progress"]
         }
         
-        if job.completed_at:
-            job_data["completed_at"] = job.completed_at.isoformat()
+        if job["completed_at"]:
+            job_data["completed_at"] = job["completed_at"]
         
-        if job.status == JobStatus.COMPLETED:
-            job_data["download_url"] = f"/download/{job.job_id}"
-        elif job.status == JobStatus.FAILED:
-            job_data["error_message"] = job.error_message
+        if job["status"] == "completed":
+            job_data["download_url"] = f"/download/{job['job_id']}"
+        elif job["status"] == "failed":
+            job_data["error_message"] = job["error"]
             
         response_jobs.append(job_data)
     
@@ -573,6 +789,33 @@ async def delete_job(job_id: str):
     
     - **job_id**: The job ID to delete
     """
+    # Try new job manager first
+    job = JobManager.get_job(job_id)
+    if job:
+        # Don't allow deletion of processing jobs
+        if job["status"] == "processing":
+            raise HTTPException(status_code=400, detail="Cannot delete job that is currently processing")
+        
+        # Clean up files
+        files_to_clean = [job["image_path"], job["audio_path"], job["output_path"]]
+        for file_path in files_to_clean:
+            try:
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
+            except:
+                pass  # Don't fail if cleanup fails
+        
+        # Remove from jobs and delete job file
+        del jobs[job_id]
+        job_file = JOBS_DIR / f"{job_id}.json"
+        if job_file.exists():
+            job_file.unlink()
+        
+        return JSONResponse(content={
+            "message": f"Job {job_id} deleted successfully"
+        })
+    
+    # Fallback to legacy job storage
     job_info = active_jobs.get(job_id)
     if not job_info:
         raise HTTPException(status_code=404, detail="Job not found")
