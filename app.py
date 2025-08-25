@@ -15,6 +15,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from enum import Enum
+import sys
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
@@ -341,7 +342,13 @@ class InfiniteTalkGenerator:
         if self.model_loaded:
             return
             
-        # Check if model weights exist
+        # Check if model weights exist, download if not
+        if not check_models_exist():
+            logger.info("Models not found during load_model, attempting download...")
+            if not download_models_automatically():
+                raise FileNotFoundError("Failed to download required models. Please run 'python setup.py' manually.")
+        
+        # Double-check that models now exist
         required_paths = [
             MODEL_CONFIG["ckpt_dir"],
             MODEL_CONFIG["wav2vec_dir"],
@@ -352,8 +359,8 @@ class InfiniteTalkGenerator:
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Model weights not found at: {path}")
         
-        print(f"Loading InfiniteTalk model on {self.device}...")
-        print("InfiniteTalk models will be loaded on first inference call")
+        logger.info(f"Loading InfiniteTalk model on {self.device}...")
+        logger.info("InfiniteTalk models will be loaded on first inference call")
         
         self.model_loaded = True
         
@@ -407,6 +414,59 @@ class InfiniteTalkGenerator:
                 temp_json.unlink()
 
 
+def check_models_exist():
+    """Check if all required models exist"""
+    required_paths = [
+        MODEL_CONFIG["ckpt_dir"],
+        MODEL_CONFIG["wav2vec_dir"],
+        MODEL_CONFIG["infinitetalk_dir"]
+    ]
+    
+    for path in required_paths:
+        if not os.path.exists(path):
+            return False
+    return True
+
+
+def download_models_automatically():
+    """Automatically download models using setup.py"""
+    logger.info("Models not found. Starting automatic download...")
+    
+    try:
+        # Run setup.py to download models
+        setup_script = Path(__file__).parent / "setup.py"
+        if not setup_script.exists():
+            logger.error("setup.py not found!")
+            return False
+        
+        logger.info("Running setup.py to download models...")
+        result = subprocess.run(
+            [sys.executable, str(setup_script)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        logger.info("Model download completed successfully")
+        logger.info(f"Setup output: {result.stdout}")
+        
+        # Verify models are now present
+        if check_models_exist():
+            logger.info("All models verified successfully")
+            return True
+        else:
+            logger.error("Models still missing after download")
+            return False
+            
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Model download failed: {e}")
+        logger.error(f"Setup stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during model download: {e}")
+        return False
+
+
 # Global model instance
 generator = InfiniteTalkGenerator()
 
@@ -419,12 +479,24 @@ async def startup_event():
     JobManager.load_jobs_from_disk()
     logger.info(f"Loaded {len(jobs)} existing jobs")
     
+    # Check if models exist, download if not
+    if not check_models_exist():
+        logger.info("Models not found, starting automatic download...")
+        if download_models_automatically():
+            logger.info("Models downloaded successfully")
+        else:
+            logger.error("Failed to download models automatically")
+            logger.error("Please run 'python setup.py' manually to download models")
+            return
+    else:
+        logger.info("All required models found")
+    
     try:
         generator.load_model()
-        print("InfiniteTalk model loaded successfully")
+        logger.info("InfiniteTalk model loaded successfully")
     except Exception as e:
-        print(f"Warning: Model loading failed: {e}")
-        print("Model will be loaded on first request")
+        logger.warning(f"Model loading failed: {e}")
+        logger.warning("Model will be loaded on first request")
 
 
 @app.get("/health")
