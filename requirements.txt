@@ -39,19 +39,22 @@ omegaconf==2.3.0
 einops==0.7.0
 timm==0.9.12
 
-# Flash attention alternatives (uncomment if needed):
-# Option 1: Use xformers (already included) - preferred
-# Option 2: Fast flash-attn install (requires ninja):
-#   MAX_JOBS=4 pip install flash-attn==2.7.4.post1 --no-build-isolation
-# Option 3: Pre-compiled wheel (check https://github.com/PLISGOOD/flash-attention-windows-wheels)
-# flash-attn==2.7.4.post1
+# Flash attention alternatives (updated to fix compatibility):
+# Option 1: Use xformers (already included) - preferred for most cases
+# Option 2: Compatible flash-attn version for PyTorch 2.4.1
+# Option 3: If flash-attn still fails, uncomment xformers alternative below
 
 # Additional InfiniteTalk dependencies
 misaki[en]
 ninja
 packaging
 wheel
-flash_attn==2.7.4.post1
+
+# Try compatible flash-attn version first
+# flash-attn>=2.6.0,<2.8.0 --no-build-isolation
+
+# Fallback option - remove flash_attn and rely on xformers
+# Comment out flash_attn line above if using this approach
 
 # Model and tokenizer utilities
 tokenizers>=0.20.3
@@ -69,9 +72,6 @@ pydantic-settings==2.1.0
 
 # Development and debugging
 rich==13.7.0
-
-# Code generation
-sqlacodegen --pre
 
 # HTTP client for model downloads
 httpx==0.25.2
