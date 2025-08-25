@@ -60,7 +60,7 @@ class JobStatus(str, Enum):
 
 class JobRequest(BaseModel):
     resolution: str = Field(default="480p", description="Output resolution: 480p or 720p")
-    sample_steps: int = Field(default=40, description="Number of sampling steps")
+    sample_steps: int = Field(default=20, description="Number of sampling steps")
     audio_cfg_scale: float = Field(default=4.0, description="Audio CFG scale")
     max_duration: int = Field(default=40, description="Maximum video duration in seconds")
 
@@ -718,7 +718,7 @@ async def generate_video(
     image: UploadFile = File(..., description="Input image file (JPG, PNG, WebP)"),
     audio: UploadFile = File(..., description="Input audio file (WAV, MP3, FLAC)"),
     resolution: str = Form("480p", description="Output resolution: 480p or 720p"),
-    sample_steps: int = Form(40, description="Number of sampling steps (default: 40)"),
+    sample_steps: int = Form(20, description="Number of sampling steps (default: 20)"),
     audio_cfg_scale: float = Form(4.0, description="Audio CFG scale (3-5 recommended)"),
     max_duration: int = Form(40, description="Maximum video duration in seconds")
 ):
