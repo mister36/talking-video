@@ -408,6 +408,7 @@ class InfiniteTalkGenerator:
                 "--sample_steps", str(MODEL_CONFIG["sample_steps"]),
                 "--mode", MODEL_CONFIG["mode"],
                 "--motion_frame", str(MODEL_CONFIG["motion_frame"]),
+                "--use_teacache",  # Enable TeaCache for faster inference
                 "--save_file", output_path.replace('.mp4', '')
             ]
             
