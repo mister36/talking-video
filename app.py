@@ -92,13 +92,29 @@ MODEL_CONFIG = {
     "wav2vec_dir": "InfiniteTalk/weights/chinese-wav2vec2-base", 
     "infinitetalk_dir": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
     "size": "infinitetalk-480",  # or infinitetalk-720
-    "sample_steps": 20,  # Reduced from 40 for faster inference on A100
+    "sample_steps": 20,  # Keeping current value as requested
     "mode": "streaming",
     "motion_frame": 9,
-    "sample_text_guide_scale": 5.0,
-    "sample_audio_guide_scale": 4.0,
+    "sample_text_guide_scale": 1.0,  # Reduced from 5.0 for faster convergence
+    "sample_audio_guide_scale": 1.2,  # Reduced from 4.0 for faster convergence
     "max_frame_num": 1000,  # 40 seconds at 25fps
-    # Removed num_persistent_param_in_dit - A100 has enough VRAM to keep everything on GPU
+    # Block swapping configuration for VRAM optimization
+    "block_swap": {
+        "blocks_to_swap": 40,
+        "use_non_blocking": True,
+        "offload_img_emb": False,
+        "offload_txt_emb": False,
+        "vace_blocks_to_swap": 0,
+        "prefetch_blocks": 0
+    },
+    # Precision and performance optimizations
+    "precision": "bf16",  # Use bfloat16 for speed
+    "attention_mode": "sdpa",  # Scaled Dot Product Attention
+    "scheduler": "flowmatch_distill",  # More efficient scheduler
+    "quantization": "disabled",  # No quantization overhead
+    # Text encoding optimizations
+    "text_encoder_offload": True,
+    "use_disk_cache": False,
 }
 
 # Directory setup
@@ -408,7 +424,24 @@ class InfiniteTalkGenerator:
                 "--sample_steps", str(MODEL_CONFIG["sample_steps"]),
                 "--mode", MODEL_CONFIG["mode"],
                 "--motion_frame", str(MODEL_CONFIG["motion_frame"]),
-                "--save_file", output_path.replace('.mp4', '')
+                "--save_file", output_path.replace('.mp4', ''),
+                # Performance optimizations
+                "--precision", MODEL_CONFIG["precision"],
+                "--attention_mode", MODEL_CONFIG["attention_mode"], 
+                "--scheduler", MODEL_CONFIG["scheduler"],
+                "--quantization", MODEL_CONFIG["quantization"],
+                "--sample_text_guide_scale", str(MODEL_CONFIG["sample_text_guide_scale"]),
+                "--sample_audio_guide_scale", str(MODEL_CONFIG["sample_audio_guide_scale"]),
+                # Block swapping parameters
+                "--blocks_to_swap", str(MODEL_CONFIG["block_swap"]["blocks_to_swap"]),
+                "--use_non_blocking", str(MODEL_CONFIG["block_swap"]["use_non_blocking"]).lower(),
+                "--offload_img_emb", str(MODEL_CONFIG["block_swap"]["offload_img_emb"]).lower(),
+                "--offload_txt_emb", str(MODEL_CONFIG["block_swap"]["offload_txt_emb"]).lower(),
+                "--vace_blocks_to_swap", str(MODEL_CONFIG["block_swap"]["vace_blocks_to_swap"]),
+                "--prefetch_blocks", str(MODEL_CONFIG["block_swap"]["prefetch_blocks"]),
+                # Text encoder optimizations
+                "--text_encoder_offload", str(MODEL_CONFIG["text_encoder_offload"]).lower(),
+                "--use_disk_cache", str(MODEL_CONFIG["use_disk_cache"]).lower()
             ]
             
             # Run the generation process
