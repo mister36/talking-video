@@ -60,7 +60,7 @@ class JobStatus(str, Enum):
 
 class JobRequest(BaseModel):
     resolution: str = Field(default="480p", description="Output resolution: 480p or 720p")
-    sample_steps: int = Field(default=20, description="Number of sampling steps")
+    sample_steps: int = Field(default=4, description="Number of sampling steps (4 for lightx2v LoRA)")
     audio_cfg_scale: float = Field(default=4.0, description="Audio CFG scale")
     max_duration: int = Field(default=40, description="Maximum video duration in seconds")
 
@@ -91,8 +91,10 @@ MODEL_CONFIG = {
     "ckpt_dir": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
     "wav2vec_dir": "InfiniteTalk/weights/chinese-wav2vec2-base", 
     "infinitetalk_dir": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
+    "lora_dir": "InfiniteTalk/weights/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors",
+    "lora_scale": 1.0,
     "size": "infinitetalk-480",  # or infinitetalk-720
-    "sample_steps": 20,  # Reduced from 40 for faster inference on A100
+    "sample_steps": 4,  # Reduced to 4 for lightx2v LoRA
     "mode": "streaming",
     "motion_frame": 9,
     "sample_text_guide_scale": 5.0,
@@ -365,7 +367,8 @@ class InfiniteTalkGenerator:
         required_paths = [
             MODEL_CONFIG["ckpt_dir"],
             MODEL_CONFIG["wav2vec_dir"],
-            MODEL_CONFIG["infinitetalk_dir"]
+            MODEL_CONFIG["infinitetalk_dir"],
+            MODEL_CONFIG["lora_dir"]
         ]
         
         for path in required_paths:
@@ -403,6 +406,8 @@ class InfiniteTalkGenerator:
                 "--ckpt_dir", MODEL_CONFIG["ckpt_dir"],
                 "--wav2vec_dir", MODEL_CONFIG["wav2vec_dir"],
                 "--infinitetalk_dir", MODEL_CONFIG["infinitetalk_dir"],
+                "--lora_dir", MODEL_CONFIG["lora_dir"],
+                "--lora_scale", str(MODEL_CONFIG["lora_scale"]),
                 "--input_json", str(temp_json),
                 "--size", MODEL_CONFIG["size"],
                 "--sample_steps", str(MODEL_CONFIG["sample_steps"]),
@@ -433,7 +438,8 @@ def check_models_exist():
     required_paths = [
         MODEL_CONFIG["ckpt_dir"],
         MODEL_CONFIG["wav2vec_dir"],
-        MODEL_CONFIG["infinitetalk_dir"]
+        MODEL_CONFIG["infinitetalk_dir"],
+        MODEL_CONFIG["lora_dir"]
     ]
     
     for path in required_paths:
@@ -469,6 +475,51 @@ def clone_infinitetalk_repo():
         return False
     except Exception as e:
         logger.error(f"Unexpected error cloning repository: {e}")
+        return False
+
+
+def download_lightx2v_lora():
+    """Download the lightx2v LoRA file if it doesn't exist"""
+    lora_path = Path(MODEL_CONFIG["lora_dir"])
+    
+    if lora_path.exists():
+        logger.info("LightX2V LoRA already exists")
+        return True
+    
+    # Ensure the weights directory exists
+    lora_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    logger.info("Downloading LightX2V LoRA...")
+    try:
+        lora_url = "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors"
+        
+        # Use wget or curl depending on what's available
+        cmd = ["wget", "-O", str(lora_path), lora_url]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info("LightX2V LoRA downloaded successfully with wget")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # Try with curl if wget fails
+            logger.info("wget failed, trying with curl...")
+            cmd = ["curl", "-L", "-o", str(lora_path), lora_url]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info("LightX2V LoRA downloaded successfully with curl")
+            return True
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to download LightX2V LoRA: {e}")
+        logger.error(f"Command stderr: {e.stderr}")
+        # Clean up partial download
+        if lora_path.exists():
+            lora_path.unlink()
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error downloading LoRA: {e}")
+        # Clean up partial download
+        if lora_path.exists():
+            lora_path.unlink()
         return False
 
 def download_models_automatically():
@@ -645,6 +696,10 @@ async def startup_event():
     if not clone_infinitetalk_repo():
         logger.warning("Failed to clone InfiniteTalk repository on startup")
     
+    # Download LightX2V LoRA if not present
+    if not download_lightx2v_lora():
+        logger.warning("Failed to download LightX2V LoRA on startup")
+    
     # Check if models exist, start background download if not
     if not check_models_exist():
         logger.info("Models not found, starting background download...")
@@ -718,7 +773,7 @@ async def generate_video(
     image: UploadFile = File(..., description="Input image file (JPG, PNG, WebP)"),
     audio: UploadFile = File(..., description="Input audio file (WAV, MP3, FLAC)"),
     resolution: str = Form("480p", description="Output resolution: 480p or 720p"),
-    sample_steps: int = Form(20, description="Number of sampling steps (default: 20)"),
+    sample_steps: int = Form(4, description="Number of sampling steps (default: 4 for lightx2v LoRA)"),
     audio_cfg_scale: float = Form(4.0, description="Audio CFG scale (3-5 recommended)"),
     max_duration: int = Form(40, description="Maximum video duration in seconds")
 ):
