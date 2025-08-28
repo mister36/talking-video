@@ -86,6 +86,32 @@ class JobInfo(BaseModel):
     error_message: Optional[str] = None
     progress: Optional[float] = None
 
+def is_lora_enabled():
+    """Check if LoRA is enabled based on configuration"""
+    return (
+        MODEL_CONFIG.get("lora_dir") and 
+        os.path.exists(MODEL_CONFIG["lora_dir"]) and 
+        MODEL_CONFIG.get("lora_scale", 0) > 0
+    )
+
+def get_optimal_guide_scales():
+    """Get optimal guide scale values based on whether LoRA is enabled"""
+    if is_lora_enabled():
+        return {
+            "sample_text_guide_scale": 1.0,
+            "sample_audio_guide_scale": 2.0
+        }
+    else:
+        return {
+            "sample_text_guide_scale": 5.0,
+            "sample_audio_guide_scale": 4.0
+        }
+
+def update_guide_scales():
+    """Update guide scale values in MODEL_CONFIG based on LoRA usage"""
+    optimal_scales = get_optimal_guide_scales()
+    MODEL_CONFIG.update(optimal_scales)
+
 # Global variables for model paths and configurations
 MODEL_CONFIG = {
     "ckpt_dir": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
@@ -97,8 +123,8 @@ MODEL_CONFIG = {
     "sample_steps": 4,  # Reduced to 4 for lightx2v LoRA
     "mode": "streaming",
     "motion_frame": 9,
-    "sample_text_guide_scale": 5.0,
-    "sample_audio_guide_scale": 4.0,
+    "stext_guide_scale": 5.0,  # Will be updated based on LoRA usage
+    "sample_audio_guide_scale": 4.0,  # Will be updated based on LoRA usage
     "max_frame_num": 1000,  # 40 seconds at 25fps
     # Removed num_persistent_param_in_dit - A100 has enough VRAM to keep everything on GPU
 }
@@ -384,6 +410,9 @@ class InfiniteTalkGenerator:
         """Generate lip-sync video from image and audio"""
         if not self.model_loaded:
             self.load_model()
+        
+        # Update guide scales based on LoRA usage before generation
+        update_guide_scales()
             
         # Create input JSON for InfiniteTalk with the correct format
         input_data = {
@@ -413,6 +442,8 @@ class InfiniteTalkGenerator:
                 "--sample_steps", str(MODEL_CONFIG["sample_steps"]),
                 "--mode", MODEL_CONFIG["mode"],
                 "--motion_frame", str(MODEL_CONFIG["motion_frame"]),
+                "--sample_text_guide_scale", str(MODEL_CONFIG["sample_text_guide_scale"]),
+                "--sample_audio_guide_scale", str(MODEL_CONFIG["sample_audio_guide_scale"]),
                 "--save_file", output_path.replace('.mp4', '')
             ]
             
@@ -700,6 +731,11 @@ async def startup_event():
     if not download_lightx2v_lora():
         logger.warning("Failed to download LightX2V LoRA on startup")
     
+    # Update guide scales based on LoRA availability at startup
+    update_guide_scales()
+    lora_status = "enabled" if is_lora_enabled() else "disabled"
+    logger.info(f"LoRA is {lora_status}. Guide scales: text={MODEL_CONFIG['sample_text_guide_scale']}, audio={MODEL_CONFIG['sample_audio_guide_scale']}")
+    
     # Check if models exist, start background download if not
     if not check_models_exist():
         logger.info("Models not found, starting background download...")
@@ -735,6 +771,11 @@ async def health_check():
         "model_loaded": generator.model_loaded,
         "device": generator.device if hasattr(generator, 'device') else "unknown",
         "models_available": check_models_exist(),
+        "lora_enabled": is_lora_enabled(),
+        "guide_scales": {
+            "sample_text_guide_scale": MODEL_CONFIG["sample_text_guide_scale"],
+            "sample_audio_guide_scale": MODEL_CONFIG["sample_audio_guide_scale"]
+        },
         "download_status": download_info
     }
 
@@ -860,7 +901,8 @@ async def generate_video(
         # Update model config based on parameters
         MODEL_CONFIG["size"] = f"infinitetalk-{resolution.replace('p', '')}"
         MODEL_CONFIG["sample_steps"] = sample_steps
-        MODEL_CONFIG["sample_audio_guide_scale"] = audio_cfg_scale
+        # Note: audio_cfg_scale parameter is provided for backward compatibility but 
+        # guide scales are now automatically set based on LoRA usage
         MODEL_CONFIG["max_frame_num"] = int(max_duration * 25)  # 25 fps
         
         # Create job using JobManager
