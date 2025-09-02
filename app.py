@@ -518,9 +518,8 @@ def clone_infinitetalk_repo():
             "InfiniteTalk"
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=False, text=True, check=True)
         logger.info("InfiniteTalk repository cloned successfully")
-        logger.info(f"Git output: {result.stdout}")
         return True
         
     except subprocess.CalledProcessError as e:
@@ -551,14 +550,14 @@ def download_lightx2v_lora():
         cmd = ["wget", "-O", str(lora_path), lora_url]
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=False, text=True, check=True)
             logger.info("LightX2V LoRA downloaded successfully with wget")
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
             # Try with curl if wget fails
             logger.info("wget failed, trying with curl...")
             cmd = ["curl", "-L", "-o", str(lora_path), lora_url]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=False, text=True, check=True)
             logger.info("LightX2V LoRA downloaded successfully with curl")
             return True
         
@@ -630,7 +629,7 @@ def fix_broken_models():
                     "--local-dir", str(model_path)
                 ]
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                result = subprocess.run(cmd, capture_output=False, text=True, check=True)
                 logger.info(f"Successfully re-downloaded {model['name']}")
         
         # Also download the LoRA if missing
@@ -648,7 +647,7 @@ def fix_broken_models():
                 "--revision", "refs/pr/1",
                 "--local-dir", "InfiniteTalk/weights/chinese-wav2vec2-base"
             ]
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=False, text=True, check=True)
         
         # Verify models are now present
         if check_models_exist():
