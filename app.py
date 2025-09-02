@@ -378,16 +378,25 @@ class InfiniteTalkGenerator:
                 status = download_status["status"]
             
             if status == "downloading":
-                raise FileNotFoundError("Models are currently downloading. Please wait for download to complete. Check /model-status for progress.")
+                raise FileNotFoundError("Models are currently downloading/fixing. Please wait for completion. Check /model-status for progress.")
             elif status == "failed":
                 with download_lock:
                     error = download_status["error"]
-                raise FileNotFoundError(f"Model download failed: {error}. Please run 'python setup.py' manually.")
+                raise FileNotFoundError(f"Model download/fix failed: {error}. Please check server logs.")
             else:
-                # Start download if not already started
-                logger.info("Models not found during load_model, starting background download...")
-                start_background_download()
-                raise FileNotFoundError("Model download started in background. Please wait for download to complete. Check /model-status for progress.")
+                # Try immediate fix first, then background download if that fails
+                logger.info("Models not found during load_model, attempting immediate fix...")
+                try:
+                    if fix_broken_models():
+                        logger.info("Models fixed successfully during load_model")
+                        # Continue with normal loading
+                    else:
+                        raise Exception("Immediate fix failed")
+                except Exception as e:
+                    logger.warning(f"Immediate fix failed: {e}")
+                    logger.info("Starting background download/fix...")
+                    start_background_download()
+                    raise FileNotFoundError("Model download/fix started in background. Please wait for completion. Check /model-status for progress.")
         
         # Double-check that models now exist
         required_paths = [
@@ -465,7 +474,7 @@ class InfiniteTalkGenerator:
 
 
 def check_models_exist():
-    """Check if all required models exist"""
+    """Check if all required models exist and are accessible (not broken symlinks)"""
     required_paths = [
         MODEL_CONFIG["ckpt_dir"],
         MODEL_CONFIG["wav2vec_dir"],
@@ -475,7 +484,21 @@ def check_models_exist():
     
     for path in required_paths:
         if not os.path.exists(path):
+            logger.warning(f"Model path missing: {path}")
             return False
+        
+        # Check if it's a broken symlink
+        if os.path.islink(path):
+            if not os.path.exists(os.readlink(path)):
+                logger.warning(f"Broken symlink detected: {path} -> {os.readlink(path)}")
+                return False
+        
+        # For directories, check if they contain files
+        if os.path.isdir(path):
+            if not any(os.listdir(path)):
+                logger.warning(f"Empty directory: {path}")
+                return False
+    
     return True
 
 
@@ -553,6 +576,97 @@ def download_lightx2v_lora():
             lora_path.unlink()
         return False
 
+def fix_broken_models():
+    """Fix broken or missing models by re-downloading them"""
+    logger.info("Fixing broken or missing models...")
+    
+    try:
+        # First ensure InfiniteTalk repo is cloned
+        if not clone_infinitetalk_repo():
+            logger.error("Failed to clone InfiniteTalk repository")
+            return False
+        
+        # Check each model path and fix if needed
+        models_to_check = [
+            {
+                "path": MODEL_CONFIG["ckpt_dir"],
+                "repo": "Wan-AI/Wan2.1-I2V-14B-480P",
+                "name": "Wan2.1-I2V-14B-480P"
+            },
+            {
+                "path": MODEL_CONFIG["wav2vec_dir"],
+                "repo": "TencentGameMate/chinese-wav2vec2-base",
+                "name": "chinese-wav2vec2-base"
+            },
+            {
+                "path": Path(MODEL_CONFIG["infinitetalk_dir"]).parent,  # Download to parent dir
+                "repo": "MeiGen-AI/InfiniteTalk",
+                "name": "InfiniteTalk"
+            }
+        ]
+        
+        for model in models_to_check:
+            model_path = Path(model["path"])
+            needs_download = False
+            
+            if not model_path.exists():
+                logger.info(f"Model directory missing: {model['name']}")
+                needs_download = True
+            elif model_path.is_dir() and not any(model_path.iterdir()):
+                logger.info(f"Model directory empty: {model['name']}")
+                needs_download = True
+            elif model["name"] == "InfiniteTalk":
+                # Special check for InfiniteTalk - check if the specific file exists
+                specific_file = Path(MODEL_CONFIG["infinitetalk_dir"])
+                if not specific_file.exists() or (specific_file.is_symlink() and not specific_file.resolve().exists()):
+                    logger.info(f"InfiniteTalk model file missing or broken: {specific_file}")
+                    needs_download = True
+            
+            if needs_download:
+                logger.info(f"Re-downloading {model['name']}...")
+                cmd = [
+                    "huggingface-cli", "download",
+                    model["repo"],
+                    "--local-dir", str(model_path)
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                logger.info(f"Successfully re-downloaded {model['name']}")
+        
+        # Also download the LoRA if missing
+        if not download_lightx2v_lora():
+            logger.warning("Failed to download LightX2V LoRA")
+        
+        # Download specific wav2vec2 safetensors if needed
+        wav2vec_file = Path("InfiniteTalk/weights/chinese-wav2vec2-base/model.safetensors")
+        if not wav2vec_file.exists():
+            logger.info("Downloading Wav2Vec2 safetensors file...")
+            cmd = [
+                "huggingface-cli", "download",
+                "TencentGameMate/chinese-wav2vec2-base",
+                "model.safetensors",
+                "--revision", "refs/pr/1",
+                "--local-dir", "InfiniteTalk/weights/chinese-wav2vec2-base"
+            ]
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        # Verify models are now present
+        if check_models_exist():
+            logger.info("All models verified successfully after fix")
+            return True
+        else:
+            logger.error("Models still missing after attempting to fix")
+            return False
+            
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Model fix failed: {e}")
+        logger.error(f"Command stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during model fix: {e}")
+        return False
+
+
 def download_models_automatically():
     """Automatically download models using setup.py"""
     logger.info("Models not found. Starting automatic download...")
@@ -604,10 +718,10 @@ def download_models_background():
     with download_lock:
         download_status["status"] = "downloading"
         download_status["progress"] = 0.0
-        download_status["message"] = "Starting model download..."
+        download_status["message"] = "Starting model download and verification..."
         download_status["error"] = None
     
-    logger.info("Background model download started")
+    logger.info("Background model download/fix started")
     
     try:
         # First ensure InfiniteTalk repo is cloned
@@ -622,46 +736,57 @@ def download_models_background():
             logger.error("Failed to clone InfiniteTalk repository")
             return
         
-        # Run setup.py to download models
-        setup_script = Path(__file__).parent / "setup.py"
-        if not setup_script.exists():
-            with download_lock:
-                download_status["status"] = "failed"
-                download_status["error"] = "setup.py not found!"
-            logger.error("setup.py not found!")
-            return
-        
         with download_lock:
-            download_status["progress"] = 10.0
-            download_status["message"] = "Running setup.py to download models..."
+            download_status["progress"] = 20.0
+            download_status["message"] = "Checking and fixing broken models..."
         
-        logger.info("Running setup.py to download models...")
-        # Stream output to console instead of capturing it
-        result = subprocess.run(
-            [sys.executable, str(setup_script)],
-            capture_output=False,  # Allow output to stream to console
-            text=True,
-            check=True
-        )
-        
-        with download_lock:
-            download_status["progress"] = 90.0
-            download_status["message"] = "Verifying downloaded models..."
-        
-        logger.info("Model download completed successfully")
-        
-        # Verify models are now present
-        if check_models_exist():
+        # Use the new fix function instead of setup.py
+        logger.info("Checking and fixing broken or missing models...")
+        if fix_broken_models():
             with download_lock:
                 download_status["status"] = "completed"
                 download_status["progress"] = 100.0
                 download_status["message"] = "All models downloaded and verified successfully"
             logger.info("All models verified successfully")
         else:
+            # Fallback to setup.py if fix_broken_models fails
             with download_lock:
-                download_status["status"] = "failed"
-                download_status["error"] = "Models still missing after download"
-            logger.error("Models still missing after download")
+                download_status["progress"] = 50.0
+                download_status["message"] = "Fallback: Running setup.py to download models..."
+            
+            setup_script = Path(__file__).parent / "setup.py"
+            if setup_script.exists():
+                logger.info("Fallback: Running setup.py to download models...")
+                result = subprocess.run(
+                    [sys.executable, str(setup_script)],
+                    capture_output=False,
+                    text=True,
+                    check=True
+                )
+                
+                with download_lock:
+                    download_status["progress"] = 90.0
+                    download_status["message"] = "Verifying downloaded models..."
+                
+                logger.info("Setup.py completed successfully")
+                
+                # Verify models are now present
+                if check_models_exist():
+                    with download_lock:
+                        download_status["status"] = "completed"
+                        download_status["progress"] = 100.0
+                        download_status["message"] = "All models downloaded and verified successfully"
+                    logger.info("All models verified successfully")
+                else:
+                    with download_lock:
+                        download_status["status"] = "failed"
+                        download_status["error"] = "Models still missing after download"
+                    logger.error("Models still missing after download")
+            else:
+                with download_lock:
+                    download_status["status"] = "failed"
+                    download_status["error"] = "Both fix_broken_models and setup.py failed"
+                logger.error("Both fix_broken_models and setup.py failed")
             
     except subprocess.CalledProcessError as e:
         with download_lock:
@@ -736,16 +861,30 @@ async def startup_event():
     lora_status = "enabled" if is_lora_enabled() else "disabled"
     logger.info(f"LoRA is {lora_status}. Guide scales: text={MODEL_CONFIG['sample_text_guide_scale']}, audio={MODEL_CONFIG['sample_audio_guide_scale']}")
     
-    # Check if models exist, start background download if not
+    # Check if models exist, start background download/fix if not
     if not check_models_exist():
-        logger.info("Models not found, starting background download...")
-        with download_lock:
-            download_status["status"] = "not_started"
-        start_background_download()
-        logger.info("Server will be available immediately. Models are downloading in background.")
-        logger.info("Check /model-status for download progress.")
+        logger.info("Models missing or broken, attempting immediate fix...")
+        
+        # Try to fix models immediately on startup (quick attempt)
+        try:
+            if fix_broken_models():
+                logger.info("Models fixed successfully on startup")
+                with download_lock:
+                    download_status["status"] = "completed"
+                    download_status["progress"] = 100.0
+                    download_status["message"] = "All models verified and fixed on startup"
+            else:
+                raise Exception("Immediate fix failed")
+        except Exception as e:
+            logger.warning(f"Immediate model fix failed: {e}")
+            logger.info("Starting background download/fix...")
+            with download_lock:
+                download_status["status"] = "not_started"
+            start_background_download()
+            logger.info("Server will be available immediately. Models are downloading/fixing in background.")
+            logger.info("Check /model-status for download progress.")
     else:
-        logger.info("All required models found")
+        logger.info("All required models found and verified")
         with download_lock:
             download_status["status"] = "completed"
             download_status["progress"] = 100.0
