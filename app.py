@@ -137,9 +137,9 @@ def update_model_paths_for_cache():
         },
         {
             "local_key": "infinitetalk_dir",
-            "local_default": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
+            "local_default": "InfiniteTalk/weights/InfiniteTalk/single/single/infinitetalk.safetensors",
             "repo": "MeiGen-AI/InfiniteTalk",
-            "filename": "single/infinitetalk.safetensors"
+            "filename": "single/single/infinitetalk.safetensors"
         }
     ]
     
@@ -162,7 +162,7 @@ def update_model_paths_for_cache():
 MODEL_CONFIG = {
     "ckpt_dir": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
     "wav2vec_dir": "InfiniteTalk/weights/chinese-wav2vec2-base", 
-    "infinitetalk_dir": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
+    "infinitetalk_dir": "InfiniteTalk/weights/InfiniteTalk/single/single/infinitetalk.safetensors",
     "lora_dir": "InfiniteTalk/weights/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors",
     "lora_scale": 1.0,
     "size": "infinitetalk-480",  # or infinitetalk-720
@@ -785,6 +785,7 @@ def fix_broken_models():
             # Try to find the model file in the cache
             cache_base = get_hf_cache_path("MeiGen-AI/InfiniteTalk")
             potential_files = [
+                os.path.join(cache_base, "single", "single", "infinitetalk.safetensors"),
                 os.path.join(cache_base, "single", "infinitetalk.safetensors"),
                 os.path.join(cache_base, "infinitetalk.safetensors"),
             ]
