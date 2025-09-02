@@ -112,6 +112,52 @@ def update_guide_scales():
     optimal_scales = get_optimal_guide_scales()
     MODEL_CONFIG.update(optimal_scales)
 
+def update_model_paths_for_cache():
+    """Update model paths to point to cache locations if they exist"""
+    global MODEL_CONFIG
+    
+    # Check if we should use cache paths
+    hf_home = os.environ.get('HF_HOME')
+    if not hf_home:
+        return  # Use default local paths
+    
+    logger.info("Detected HF_HOME environment variable, checking for models in cache...")
+    
+    # Map of local paths to cache locations
+    cache_mappings = [
+        {
+            "local_key": "ckpt_dir",
+            "local_default": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
+            "repo": "Wan-AI/Wan2.1-I2V-14B-480P"
+        },
+        {
+            "local_key": "wav2vec_dir", 
+            "local_default": "InfiniteTalk/weights/chinese-wav2vec2-base",
+            "repo": "TencentGameMate/chinese-wav2vec2-base"
+        },
+        {
+            "local_key": "infinitetalk_dir",
+            "local_default": "InfiniteTalk/weights/InfiniteTalk/single/infinitetalk.safetensors",
+            "repo": "MeiGen-AI/InfiniteTalk",
+            "filename": "single/infinitetalk.safetensors"
+        }
+    ]
+    
+    for mapping in cache_mappings:
+        local_path = mapping["local_default"]
+        cache_path = get_hf_cache_path(mapping["repo"], mapping.get("filename"))
+        
+        # If cache path exists and local path doesn't, use cache path
+        if os.path.exists(cache_path) and not os.path.exists(local_path):
+            MODEL_CONFIG[mapping["local_key"]] = cache_path
+            logger.info(f"Using cache path for {mapping['local_key']}: {cache_path}")
+        elif os.path.exists(cache_path) and os.path.exists(local_path):
+            # Both exist, prefer local if it's not a broken symlink
+            if os.path.islink(local_path) and not os.path.exists(os.readlink(local_path)):
+                MODEL_CONFIG[mapping["local_key"]] = cache_path
+                logger.info(f"Local path is broken symlink, using cache for {mapping['local_key']}: {cache_path}")
+
+
 # Global variables for model paths and configurations
 MODEL_CONFIG = {
     "ckpt_dir": "InfiniteTalk/weights/Wan2.1-I2V-14B-480P",
@@ -370,6 +416,9 @@ class InfiniteTalkGenerator:
         """Load the InfiniteTalk model"""
         if self.model_loaded:
             return
+        
+        # Update model paths for cache before checking if models exist
+        update_model_paths_for_cache()
             
         # Check if model weights exist
         if not check_models_exist():
@@ -389,7 +438,8 @@ class InfiniteTalkGenerator:
                 try:
                     if fix_broken_models():
                         logger.info("Models fixed successfully during load_model")
-                        # Continue with normal loading
+                        # Update paths again after fix
+                        update_model_paths_for_cache()
                     else:
                         raise Exception("Immediate fix failed")
                 except Exception as e:
@@ -412,6 +462,7 @@ class InfiniteTalkGenerator:
         
         logger.info(f"Loading InfiniteTalk model on {self.device}...")
         logger.info("InfiniteTalk models will be loaded on first inference call")
+        logger.info(f"Model paths: ckpt_dir={MODEL_CONFIG['ckpt_dir']}, wav2vec_dir={MODEL_CONFIG['wav2vec_dir']}, infinitetalk_dir={MODEL_CONFIG['infinitetalk_dir']}")
         
         self.model_loaded = True
         
@@ -575,8 +626,70 @@ def download_lightx2v_lora():
             lora_path.unlink()
         return False
 
+def create_symlink_if_not_exists(src, dst):
+    """Create a symlink from src to dst if dst doesn't exist"""
+    dst_path = Path(dst)
+    src_path = Path(src)
+    
+    # Create parent directories if they don't exist
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # If destination already exists and is a working symlink or real file/dir, skip
+    if dst_path.exists():
+        return True
+    
+    # Remove broken symlinks
+    if dst_path.is_symlink():
+        dst_path.unlink()
+    
+    # Create symlink if source exists
+    if src_path.exists():
+        try:
+            dst_path.symlink_to(src_path.resolve())
+            logger.info(f"Created symlink: {dst} -> {src}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to create symlink {dst} -> {src}: {e}")
+            return False
+    
+    return False
+
+
+def get_hf_cache_path(repo_id, filename=None):
+    """Get the Hugging Face cache path for a given repo"""
+    import hashlib
+    
+    # Get HF cache directory from environment or default
+    hf_home = os.environ.get('HF_HOME', '/workspace/.cache/huggingface')
+    hub_cache = os.path.join(hf_home, 'hub')
+    
+    # Create repo cache directory name
+    repo_cache_name = f"models--{repo_id.replace('/', '--')}"
+    repo_cache_path = os.path.join(hub_cache, repo_cache_name)
+    
+    if filename:
+        # For specific files, look in snapshots
+        snapshots_dir = os.path.join(repo_cache_path, 'snapshots')
+        if os.path.exists(snapshots_dir):
+            # Get the latest snapshot (most recent directory)
+            snapshots = [d for d in os.listdir(snapshots_dir) if os.path.isdir(os.path.join(snapshots_dir, d))]
+            if snapshots:
+                latest_snapshot = max(snapshots, key=lambda x: os.path.getctime(os.path.join(snapshots_dir, x)))
+                return os.path.join(snapshots_dir, latest_snapshot, filename)
+    
+    # For directories, try to find in snapshots
+    snapshots_dir = os.path.join(repo_cache_path, 'snapshots')
+    if os.path.exists(snapshots_dir):
+        snapshots = [d for d in os.listdir(snapshots_dir) if os.path.isdir(os.path.join(snapshots_dir, d))]
+        if snapshots:
+            latest_snapshot = max(snapshots, key=lambda x: os.path.getctime(os.path.join(snapshots_dir, x)))
+            return os.path.join(snapshots_dir, latest_snapshot)
+    
+    return repo_cache_path
+
+
 def fix_broken_models():
-    """Fix broken or missing models by re-downloading them"""
+    """Fix broken or missing models by re-downloading them and creating proper symlinks"""
     logger.info("Fixing broken or missing models...")
     
     try:
@@ -632,6 +745,56 @@ def fix_broken_models():
                 result = subprocess.run(cmd, capture_output=False, text=True, check=True)
                 logger.info(f"Successfully re-downloaded {model['name']}")
         
+        # After downloading, try to create symlinks from cache to expected locations
+        logger.info("Creating symlinks from HF cache to expected model paths...")
+        
+        # Create symlinks for each model if they exist in cache
+        cache_to_local_mappings = [
+            {
+                "cache_path": get_hf_cache_path("Wan-AI/Wan2.1-I2V-14B-480P"),
+                "local_path": MODEL_CONFIG["ckpt_dir"],
+                "name": "Wan2.1-I2V-14B-480P"
+            },
+            {
+                "cache_path": get_hf_cache_path("TencentGameMate/chinese-wav2vec2-base"),
+                "local_path": MODEL_CONFIG["wav2vec_dir"],
+                "name": "chinese-wav2vec2-base"
+            },
+            {
+                "cache_path": get_hf_cache_path("MeiGen-AI/InfiniteTalk"),
+                "local_path": Path(MODEL_CONFIG["infinitetalk_dir"]).parent,
+                "name": "InfiniteTalk"
+            }
+        ]
+        
+        for mapping in cache_to_local_mappings:
+            cache_path = mapping["cache_path"]
+            local_path = mapping["local_path"]
+            name = mapping["name"]
+            
+            if os.path.exists(cache_path):
+                logger.info(f"Found {name} in cache: {cache_path}")
+                if not os.path.exists(local_path) or not any(Path(local_path).iterdir()):
+                    create_symlink_if_not_exists(cache_path, local_path)
+            else:
+                logger.warning(f"Cache path not found for {name}: {cache_path}")
+        
+        # Special handling for InfiniteTalk model file
+        infinitetalk_file = Path(MODEL_CONFIG["infinitetalk_dir"])
+        if not infinitetalk_file.exists():
+            # Try to find the model file in the cache
+            cache_base = get_hf_cache_path("MeiGen-AI/InfiniteTalk")
+            potential_files = [
+                os.path.join(cache_base, "single", "infinitetalk.safetensors"),
+                os.path.join(cache_base, "infinitetalk.safetensors"),
+            ]
+            
+            for potential_file in potential_files:
+                if os.path.exists(potential_file):
+                    logger.info(f"Found InfiniteTalk model in cache: {potential_file}")
+                    create_symlink_if_not_exists(potential_file, infinitetalk_file)
+                    break
+        
         # Also download the LoRA if missing
         if not download_lightx2v_lora():
             logger.warning("Failed to download LightX2V LoRA")
@@ -655,6 +818,28 @@ def fix_broken_models():
             return True
         else:
             logger.error("Models still missing after attempting to fix")
+            # Log what's actually missing for debugging
+            required_paths = [
+                MODEL_CONFIG["ckpt_dir"],
+                MODEL_CONFIG["wav2vec_dir"],
+                MODEL_CONFIG["infinitetalk_dir"],
+                MODEL_CONFIG["lora_dir"]
+            ]
+            
+            for path in required_paths:
+                if not os.path.exists(path):
+                    logger.error(f"Still missing: {path}")
+                    # Try to find alternatives in cache
+                    if "Wan2.1-I2V-14B-480P" in path:
+                        cache_path = get_hf_cache_path("Wan-AI/Wan2.1-I2V-14B-480P")
+                        logger.info(f"Check cache: {cache_path} exists: {os.path.exists(cache_path)}")
+                    elif "chinese-wav2vec2-base" in path:
+                        cache_path = get_hf_cache_path("TencentGameMate/chinese-wav2vec2-base")
+                        logger.info(f"Check cache: {cache_path} exists: {os.path.exists(cache_path)}")
+                    elif "InfiniteTalk" in path:
+                        cache_path = get_hf_cache_path("MeiGen-AI/InfiniteTalk")
+                        logger.info(f"Check cache: {cache_path} exists: {os.path.exists(cache_path)}")
+            
             return False
             
     except subprocess.CalledProcessError as e:
@@ -854,6 +1039,9 @@ async def startup_event():
     # Download LightX2V LoRA if not present
     if not download_lightx2v_lora():
         logger.warning("Failed to download LightX2V LoRA on startup")
+    
+    # Update model paths to use cache if available
+    update_model_paths_for_cache()
     
     # Update guide scales based on LoRA availability at startup
     update_guide_scales()
