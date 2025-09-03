@@ -172,6 +172,7 @@ MODEL_CONFIG = {
     "stext_guide_scale": 5.0,  # Will be updated based on LoRA usage
     "sample_audio_guide_scale": 4.0,  # Will be updated based on LoRA usage
     "max_frame_num": 1000,  # 40 seconds at 25fps
+    "keep_models_loaded": True,  # Set to False to save VRAM by offloading models after each generation
     # Removed num_persistent_param_in_dit - A100 has enough VRAM to keep everything on GPU
 }
 
@@ -504,6 +505,7 @@ class InfiniteTalkGenerator:
                 "--motion_frame", str(MODEL_CONFIG["motion_frame"]),
                 "--sample_text_guide_scale", str(MODEL_CONFIG["sample_text_guide_scale"]),
                 "--sample_audio_guide_scale", str(MODEL_CONFIG["sample_audio_guide_scale"]),
+                "--offload_model", str(not MODEL_CONFIG["keep_models_loaded"]),
                 "--save_file", output_path.replace('.mp4', '')
             ]
             
@@ -1121,6 +1123,40 @@ async def model_download_status():
     status_info["model_loaded"] = generator.model_loaded
     
     return JSONResponse(content=status_info)
+
+
+@app.post("/model-persistence")
+async def set_model_persistence(keep_loaded: bool = True):
+    """
+    Configure whether models should stay loaded in memory between generations
+    
+    Args:
+        keep_loaded: If True, models stay in VRAM for faster subsequent generations.
+                    If False, models are offloaded to CPU to save VRAM.
+                    
+    Returns:
+        Current model persistence configuration
+    """
+    MODEL_CONFIG["keep_models_loaded"] = keep_loaded
+    return JSONResponse(content={
+        "keep_models_loaded": MODEL_CONFIG["keep_models_loaded"],
+        "message": f"Model persistence {'enabled' if keep_loaded else 'disabled'}. "
+                  f"Models will {'stay loaded' if keep_loaded else 'be offloaded'} after generation."
+    })
+
+
+@app.get("/model-persistence")
+async def get_model_persistence():
+    """
+    Get current model persistence configuration
+    
+    Returns:
+        Current model persistence setting
+    """
+    return JSONResponse(content={
+        "keep_models_loaded": MODEL_CONFIG["keep_models_loaded"],
+        "description": "If True, models stay in VRAM for faster generation. If False, models are offloaded to save VRAM."
+    })
 
 
 def validate_image(file: UploadFile) -> bool:
