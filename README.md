@@ -9,6 +9,18 @@ A FastAPI server for generating lip-sync videos using the InfiniteTalk model. Th
 -   ⚡ **Fast API**: RESTful API with automatic documentation
 -   🔧 **Configurable**: Adjustable resolution, quality, and generation parameters
 -   🚀 **RunPod Ready**: Optimized for deployment on RunPod GPU instances
+-   🧠 **Persistent Models**: Models stay loaded in memory between generations for faster inference
+
+## ⚠️ Important Limitations
+
+**This API is designed for single-user scenarios and does NOT support concurrent video generation requests.**
+
+-   **No Concurrency Support**: Multiple simultaneous generation requests will cause errors or crashes
+-   **Single-Threaded Design**: Only one video generation can run at a time
+-   **Memory Intensive**: Models remain loaded in GPU memory (10-15GB+ VRAM usage)
+-   **Resource Isolation**: Model errors may affect subsequent generations until server restart
+
+**For production use with multiple users, consider implementing request queuing or running multiple instances.**
 
 ## Requirements
 

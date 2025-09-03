@@ -407,14 +407,19 @@ async def process_video_generation_legacy(job_id: str):
             pass
 
 class InfiniteTalkGenerator:
-    """Wrapper class for InfiniteTalk model inference"""
+    """Wrapper class for InfiniteTalk model inference with persistent pipeline"""
     
     def __init__(self):
         self.model_loaded = False
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.local_rank = 0  # Single device setup
+        self.rank = 0
+        self.pipeline = None
+        self.wav2vec_feature_extractor = None
+        self.audio_encoder = None
         
     def load_model(self):
-        """Load the InfiniteTalk model"""
+        """Load the InfiniteTalk model pipeline directly into memory"""
         if self.model_loaded:
             return
         
@@ -461,69 +466,187 @@ class InfiniteTalkGenerator:
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Model weights not found at: {path}")
         
-        logger.info(f"Loading InfiniteTalk model on {self.device}...")
-        logger.info("InfiniteTalk models will be loaded on first inference call")
+        logger.info(f"Loading InfiniteTalk pipeline directly on {self.device}...")
+        
+        # Import InfiniteTalk dependencies
+        try:
+            import sys
+            sys.path.append('InfiniteTalk')
+            import wan
+            from wan.configs import WAN_CONFIGS
+            from transformers import Wav2Vec2FeatureExtractor
+            from src.audio_analysis.wav2vec2 import Wav2Vec2Model
+        except ImportError as e:
+            raise ImportError(f"Failed to import InfiniteTalk dependencies: {e}")
+        
+        # Initialize pipeline configuration
+        task = "infinitetalk-14B"
+        cfg = WAN_CONFIGS[task]
+        
+        # Create the persistent InfiniteTalk pipeline
+        self.pipeline = wan.InfiniteTalkPipeline(
+            config=cfg,
+            checkpoint_dir=MODEL_CONFIG["ckpt_dir"],
+            quant_dir=None,
+            device_id=self.local_rank,
+            rank=self.rank,
+            t5_fsdp=False,
+            dit_fsdp=False,
+            use_usp=False,
+            t5_cpu=False,
+            lora_dir=[MODEL_CONFIG["lora_dir"]] if MODEL_CONFIG["lora_dir"] else None,
+            lora_scales=[MODEL_CONFIG["lora_scale"]],
+            quant=None,
+            dit_path=None,
+            infinitetalk_dir=MODEL_CONFIG["infinitetalk_dir"]
+        )
+        
+        # Enable VRAM management if configured
+        if MODEL_CONFIG.get("num_persistent_param_in_dit") is not None:
+            self.pipeline.vram_management = True
+            self.pipeline.enable_vram_management(
+                num_persistent_param_in_dit=MODEL_CONFIG["num_persistent_param_in_dit"]
+            )
+        
+        # Initialize audio processing components
+        self.wav2vec_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
+            MODEL_CONFIG["wav2vec_dir"], local_files_only=True
+        )
+        self.audio_encoder = Wav2Vec2Model.from_pretrained(
+            MODEL_CONFIG["wav2vec_dir"], local_files_only=True
+        ).to('cpu')  # Keep on CPU as in original
+        self.audio_encoder.feature_extractor._freeze_parameters()
+        
+        logger.info("InfiniteTalk pipeline loaded successfully and ready for inference")
         logger.info(f"Model paths: ckpt_dir={MODEL_CONFIG['ckpt_dir']}, wav2vec_dir={MODEL_CONFIG['wav2vec_dir']}, infinitetalk_dir={MODEL_CONFIG['infinitetalk_dir']}")
         
         self.model_loaded = True
+    
+    def _loudness_norm(self, audio_array, sr=16000, lufs=-23):
+        """Normalize audio loudness"""
+        import pyloudnorm as pyln
+        meter = pyln.Meter(sr)
+        loudness = meter.integrated_loudness(audio_array)
+        if abs(loudness) > 100:
+            return audio_array
+        normalized_audio = pyln.normalize.loudness(audio_array, loudness, lufs)
+        return normalized_audio
+    
+    def _audio_prepare_single(self, audio_path, sample_rate=16000):
+        """Prepare single audio file for processing"""
+        import librosa
+        human_speech_array, sr = librosa.load(audio_path, sr=sample_rate)
+        human_speech_array = self._loudness_norm(human_speech_array, sr)
+        return human_speech_array
+    
+    def _get_embedding(self, speech_array, sr=16000, device='cpu'):
+        """Extract audio embeddings using wav2vec"""
+        from einops import rearrange
+        
+        audio_duration = len(speech_array) / sr
+        video_length = audio_duration * 25  # Assume the video fps is 25
+        
+        # wav2vec_feature_extractor
+        audio_feature = np.squeeze(
+            self.wav2vec_feature_extractor(speech_array, sampling_rate=sr).input_values
+        )
+        audio_feature = torch.from_numpy(audio_feature).float().to(device=device)
+        audio_feature = audio_feature.unsqueeze(0)
+        
+        # audio encoder
+        with torch.no_grad():
+            embeddings = self.audio_encoder(audio_feature, seq_len=int(video_length), output_hidden_states=True)
+        
+        if len(embeddings) == 0:
+            raise RuntimeError("Failed to extract audio embedding")
+        
+        audio_emb = torch.stack(embeddings.hidden_states[1:], dim=1).squeeze(0)
+        audio_emb = rearrange(audio_emb, "b s d -> s b d")
+        audio_emb = audio_emb.cpu().detach()
+        return audio_emb
         
     def generate_video(self, image_path: str, audio_path: str, output_path: str) -> str:
-        """Generate lip-sync video from image and audio"""
+        """Generate lip-sync video from image and audio using persistent pipeline"""
         if not self.model_loaded:
             self.load_model()
         
         # Update guide scales based on LoRA usage before generation
         update_guide_scales()
-            
-        # Create input JSON for InfiniteTalk with the correct format
-        input_data = {
-            "prompt": "A person is speaking with natural facial expressions and lip movements, captured in high quality with good lighting and clear details.",
-            "cond_video": image_path,
-            "cond_audio": {
-                "person1": audio_path
-            }
-        }
         
-        # Create temporary JSON file
-        temp_json = TEMP_DIR / f"input_{uuid.uuid4().hex}.json"
-        with open(temp_json, 'w') as f:
-            json.dump(input_data, f)
+        import soundfile as sf
+        import random
+        from datetime import datetime
+        
+        logger.info(f"Starting direct pipeline generation for: {image_path} -> {output_path}")
+        
+        # Create temporary directory for audio processing
+        audio_save_dir = TEMP_DIR / f"audio_{uuid.uuid4().hex}"
+        audio_save_dir.mkdir(exist_ok=True)
         
         try:
-            # Build command for InfiniteTalk generation using the cloned repository
-            cmd = [
-                "python", "InfiniteTalk/generate_infinitetalk.py",
-                "--ckpt_dir", MODEL_CONFIG["ckpt_dir"],
-                "--wav2vec_dir", MODEL_CONFIG["wav2vec_dir"],
-                "--infinitetalk_dir", MODEL_CONFIG["infinitetalk_dir"],
-                "--lora_dir", MODEL_CONFIG["lora_dir"],
-                "--lora_scale", str(MODEL_CONFIG["lora_scale"]),
-                "--input_json", str(temp_json),
-                "--size", MODEL_CONFIG["size"],
-                "--sample_steps", str(MODEL_CONFIG["sample_steps"]),
-                "--mode", MODEL_CONFIG["mode"],
-                "--motion_frame", str(MODEL_CONFIG["motion_frame"]),
-                "--sample_text_guide_scale", str(MODEL_CONFIG["sample_text_guide_scale"]),
-                "--sample_audio_guide_scale", str(MODEL_CONFIG["sample_audio_guide_scale"]),
-                "--offload_model", str(not MODEL_CONFIG["keep_models_loaded"]),
-                "--save_file", output_path.replace('.mp4', '')
-            ]
+            # Prepare audio
+            human_speech = self._audio_prepare_single(audio_path)
             
-            # Run the generation process
-            print(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=False, text=True, check=True)
+            # Save processed audio
+            sum_audio = audio_save_dir / 'sum_all.wav'
+            sf.write(str(sum_audio), human_speech, 16000)
             
-            if result.returncode != 0:
-                raise RuntimeError("Generation failed - check console output for details")
-                
+            # Extract audio embeddings
+            audio_embedding = self._get_embedding(human_speech)
+            emb_path = audio_save_dir / '1.pt'
+            torch.save(audio_embedding, str(emb_path))
+            
+            # Prepare input for pipeline
+            prompt = "A person is speaking with natural facial expressions and lip movements, captured in high quality with good lighting and clear details."
+            
+            input_clip = {
+                'prompt': prompt,
+                'cond_video': image_path,
+                'cond_audio': {
+                    'person1': str(emb_path)
+                },
+                'video_audio': str(sum_audio)
+            }
+            
+            # Generate video using the persistent pipeline
+            logger.info("Generating video with persistent pipeline...")
+            video = self.pipeline.generate_infinitetalk(
+                input_clip,
+                size_buckget=MODEL_CONFIG["size"],
+                motion_frame=MODEL_CONFIG["motion_frame"],
+                frame_num=81,  # Default frame_num from original script
+                shift=7 if MODEL_CONFIG["size"] == 'infinitetalk-480' else 11,  # Default sample_shift
+                sampling_steps=MODEL_CONFIG["sample_steps"],
+                text_guide_scale=MODEL_CONFIG["sample_text_guide_scale"],
+                audio_guide_scale=MODEL_CONFIG["sample_audio_guide_scale"],
+                seed=random.randint(0, 99999999),  # Random seed for generation
+                offload_model=not MODEL_CONFIG["keep_models_loaded"],
+                max_frames_num=MODEL_CONFIG["max_frame_num"],
+                color_correction_strength=1.0,
+                extra_args=None,
+            )
+            
+            # Save the generated video
+            import sys
+            sys.path.append('InfiniteTalk')
+            from wan.utils.multitalk_utils import save_video_ffmpeg
+            
+            save_video_ffmpeg(video, output_path.replace('.mp4', ''), [str(sum_audio)], high_quality_save=False)
+            
+            logger.info(f"Video generation completed: {output_path}")
             return output_path
             
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Video generation failed - check console output for details: {e}")
+        except Exception as e:
+            logger.error(f"Video generation failed: {str(e)}")
+            raise RuntimeError(f"Video generation failed: {str(e)}")
         finally:
-            # Clean up temporary files
-            if temp_json.exists():
-                temp_json.unlink()
+            # Clean up temporary audio processing files
+            try:
+                import shutil
+                if audio_save_dir.exists():
+                    shutil.rmtree(audio_save_dir)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary audio files: {e}")
 
 
 def check_models_exist():
