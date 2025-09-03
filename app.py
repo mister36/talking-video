@@ -608,6 +608,18 @@ class InfiniteTalkGenerator:
                 'video_audio': str(sum_audio)
             }
             
+            # Create args object for the pipeline (required for teacache and APG settings)
+            class ExtraArgs:
+                def __init__(self):
+                    self.use_teacache = False  # Disable teacache for now
+                    self.teacache_thresh = 0.2
+                    self.use_apg = False  # Disable APG for now  
+                    self.apg_momentum = -0.75
+                    self.apg_norm_threshold = 55
+                    self.size = MODEL_CONFIG["size"]
+            
+            extra_args = ExtraArgs()
+            
             # Generate video using the persistent pipeline
             logger.info("Generating video with persistent pipeline...")
             video = self.pipeline.generate_infinitetalk(
@@ -623,7 +635,7 @@ class InfiniteTalkGenerator:
                 offload_model=not MODEL_CONFIG["keep_models_loaded"],
                 max_frames_num=MODEL_CONFIG["max_frame_num"],
                 color_correction_strength=1.0,
-                extra_args=None,
+                extra_args=extra_args,
             )
             
             # Save the generated video
