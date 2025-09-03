@@ -62,7 +62,7 @@ class JobRequest(BaseModel):
     resolution: str = Field(default="480p", description="Output resolution: 480p or 720p")
     sample_steps: int = Field(default=4, description="Number of sampling steps (4 for lightx2v LoRA)")
     audio_cfg_scale: float = Field(default=4.0, description="Audio CFG scale")
-    max_duration: int = Field(default=40, description="Maximum video duration in seconds")
+    max_duration: int = Field(default=60, description="Maximum video duration in seconds")
 
 class JobResponse(BaseModel):
     job_id: str = Field(description="Unique job identifier")
@@ -171,7 +171,7 @@ MODEL_CONFIG = {
     "motion_frame": 9,
     "stext_guide_scale": 5.0,  # Will be updated based on LoRA usage
     "sample_audio_guide_scale": 4.0,  # Will be updated based on LoRA usage
-    "max_frame_num": 1000,  # 40 seconds at 25fps
+    "max_frame_num": 1500,  # 60 seconds at 25fps
     "keep_models_loaded": True,  # Set to False to save VRAM by offloading models after each generation
     # Removed num_persistent_param_in_dit - A100 has enough VRAM to keep everything on GPU
 }
@@ -1179,7 +1179,7 @@ async def generate_video(
     resolution: str = Form("480p", description="Output resolution: 480p or 720p"),
     sample_steps: int = Form(4, description="Number of sampling steps (default: 4 for lightx2v LoRA)"),
     audio_cfg_scale: float = Form(4.0, description="Audio CFG scale (3-5 recommended)"),
-    max_duration: int = Form(40, description="Maximum video duration in seconds")
+    max_duration: int = Form(60, description="Maximum video duration in seconds")
 ):
     """
     Submit a job to generate a lip-sync video from an image and audio file

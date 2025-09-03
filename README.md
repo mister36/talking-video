@@ -80,7 +80,7 @@ Upload an image and audio file to generate a lip-sync video.
 -   `resolution` (form): Output resolution ("480p" or "720p", default: "480p")
 -   `sample_steps` (form): Denoising steps (1-100, default: 40)
 -   `audio_cfg_scale` (form): Audio guidance scale (1.0-10.0, default: 4.0)
--   `max_duration` (form): Maximum video duration in seconds (1-300, default: 40)
+-   `max_duration` (form): Maximum video duration in seconds (1-300, default: 60)
 
 #### Example using curl
 
@@ -136,7 +136,7 @@ MODEL_CONFIG = {
     "sample_steps": 40,
     "sample_text_guide_scale": 5.0,
     "sample_audio_guide_scale": 4.0,
-    "max_frame_num": 1000,  # ~40 seconds at 25fps
+    "max_frame_num": 1500,  # ~60 seconds at 25fps
     "num_persistent_param_in_dit": 0,  # For low VRAM
 }
 ```
